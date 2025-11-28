@@ -14,8 +14,14 @@ const CWA_API_KEY = process.env.CWA_API_KEY;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+/**
+ * 取得「全台 22 縣市」今明 36 小時天氣預報
+ * 資料集：F-C0032-001
+ */
 const getTaiwan36hWeather = async (req, res) => {
   try {
+    // 1. 檢查是否有設定 API Key
     if (!CWA_API_KEY) {
       return res.status(500).json({
         error: "伺服器設定錯誤",
@@ -23,18 +29,17 @@ const getTaiwan36hWeather = async (req, res) => {
       });
     }
 
+    // 2. 呼叫 CWA API（不帶 locationName → 全台 22 縣市）
     const response = await axios.get(
       `${CWA_API_BASE_URL}/v1/rest/datastore/F-C0032-001`,
       {
         params: {
           Authorization: CWA_API_KEY,
-          // 不帶 locationName → 取得全台 22 縣市
         },
       }
     );
 
-    // 🔹 這裡不要再 [0]，要拿「整個陣列」
-    const locations = response.data.records.location;
+    const locations = response.data.records.location; // 陣列：每一筆是一個縣市
 
     if (!locations || locations.length === 0) {
       return res.status(404).json({
@@ -43,9 +48,8 @@ const getTaiwan36hWeather = async (req, res) => {
       });
     }
 
-    // 🔹 關鍵：對「每一個縣市」跑一次整理流程
+    // 3. 對每一個縣市做整理
     const allWeatherData = locations.map((locationData) => {
-      // 每個 locationData 就是你以前的那個 locationData（單一縣市）
       const weatherData = {
         city: locationData.locationName,
         updateTime: response.data.records.datasetDescription,
@@ -67,8 +71,10 @@ const getTaiwan36hWeather = async (req, res) => {
           windSpeed: "",
         };
 
+        // 把這個時間點的各個要素塞進 forecast
         weatherElements.forEach((element) => {
           const value = element.time[i].parameter;
+
           switch (element.elementName) {
             case "Wx":
               forecast.weather = value.parameterName;
@@ -94,19 +100,19 @@ const getTaiwan36hWeather = async (req, res) => {
         weatherData.forecasts.push(forecast);
       }
 
-      // map 最後要回傳「這個縣市整理好的結果」
-      return weatherData;
+      return weatherData; // 單一縣市
     });
 
-    // 🔹 這裡的 data 就是「一個陣列」，裡面每個元素就是你截圖的那種結構
+    // 4. 把「全台」回傳給前端
     res.json({
       success: true,
-      data: allWeatherData,
+      data: allWeatherData, // ← 陣列，每一個元素就是你截圖那種結構
     });
   } catch (error) {
     console.error("取得天氣資料失敗:", error.message);
 
     if (error.response) {
+      // API 回應錯誤
       return res.status(error.response.status).json({
         error: "CWA API 錯誤",
         message: error.response.data.message || "無法取得天氣資料",
@@ -114,6 +120,7 @@ const getTaiwan36hWeather = async (req, res) => {
       });
     }
 
+    // 其他錯誤
     res.status(500).json({
       error: "伺服器錯誤",
       message: "無法取得天氣資料，請稍後再試",
@@ -121,3 +128,41 @@ const getTaiwan36hWeather = async (req, res) => {
   }
 };
 
+// Routes
+app.get("/", (req, res) => {
+  res.json({
+    message: "歡迎使用 CWA 天氣預報 API",
+    endpoints: {
+      taiwan36h: "/api/weather/taiwan-36h",
+      health: "/api/health",
+    },
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "OK", timestamp: new Date().toISOString() });
+});
+
+// 取得台灣36H天氣預報
+app.get("/api/weather/taiwan-36h", getTaiwan36hWeather);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    error: "伺服器錯誤",
+    message: err.message,
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: "找不到此路徑",
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 伺服器運行已運作，PORT: ${PORT}`);
+  console.log(`📍 環境: ${process.env.NODE_ENV || "development"}`);
+});
